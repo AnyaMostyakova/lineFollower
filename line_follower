@@ -1,0 +1,137 @@
+import pygame
+import math
+import numpy as np
+from google.colab import files
+from IPython.display import display as ipy_display, HTML, clear_output
+import io
+import base64
+from PIL import Image
+
+# Инициализация pygame для Colab
+!pip install pygame
+!apt-get install -y xvfb python-opengl ffmpeg > /dev/null 2>&1
+!pip install pyvirtualdisplay > /dev/null 2>&1
+
+from pyvirtualdisplay import Display
+vdisplay = Display(visible=0, size=(800, 600))
+vdisplay.start()
+
+uploaded = files.upload()
+file_name = next(iter(uploaded))
+background_image = pygame.image.load(io.BytesIO(uploaded[file_name]))
+
+# Основные параметры
+screen_width = 800
+screen_height = 600
+SET_POINT = 50
+KP = 0.6
+KD = 1.2
+KI = 0.71
+ROBOT_SPEED = 10
+DT = 0.01
+FRAME_RATE = 10  # Частота обновления кадров (раз в 10 итераций)
+
+# Цвета
+BLUE = (30, 144, 255)
+GREEN = (60, 179, 113)
+WHITE = (255, 255, 255)
+
+# Инициализация pygame
+pygame.init()
+screen = pygame.display.set_mode((screen_width, screen_height))
+pygame.display.set_caption("Line Following")
+font = pygame.font.Font(None, 36)
+
+def get_pixel_brightness(image, x, y):
+    if 0 <= x < image.get_width() and 0 <= y < image.get_height():
+        color = image.get_at((x, y))
+        brightness = (color[0] + color[1] + color[2]) / 7.65
+        return int(brightness)
+    return 0
+
+class Robot:
+    def __init__(self, x, y, theta, velocity, turn_rate, axle_track, sensor_dist):
+        self.x = x
+        self.y = y
+        self.theta = theta
+        self.velocity = velocity
+        self.turn_rate = turn_rate
+        self.axle_track = axle_track
+        self.sensor_dist = sensor_dist
+
+    def reflection(self):
+        x_end = int(self.x + self.sensor_dist * math.cos(math.radians(self.theta)))
+        y_end = int(self.y + self.sensor_dist * math.sin(math.radians(self.theta)))
+        return get_pixel_brightness(background_image, x_end, y_end)
+
+    def drive(self):
+        self.x += self.velocity * math.cos(math.radians(self.theta)) * DT
+        self.y += self.velocity * math.sin(math.radians(self.theta)) * DT
+        self.theta += self.turn_rate * DT
+
+    def draw(self):
+        x_end = int(self.x + self.sensor_dist * math.cos(math.radians(self.theta)))
+        y_end = int(self.y + self.sensor_dist * math.sin(math.radians(self.theta)))
+        x_r = int(self.x + self.axle_track / 2 * math.cos(math.radians(self.theta + 90)))
+        y_r = int(self.y + self.axle_track / 2 * math.sin(math.radians(self.theta + 90)))
+        x_l = int(self.x + self.axle_track / 2 * math.cos(math.radians(self.theta - 90)))
+        y_l = int(self.y + self.axle_track / 2 * math.sin(math.radians(self.theta - 90)))
+        pygame.draw.polygon(screen, BLUE, [(x_end, y_end), (x_r, y_r), (x_l, y_l)])
+
+def image_to_base64(img_array):
+    img = Image.fromarray(img_array)
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+def main():
+    prev_err = 0
+    error_sum = 0
+    robot = Robot(x=300, y=360, theta=0, velocity=ROBOT_SPEED, turn_rate=0, axle_track=80, sensor_dist=80)
+    
+    display_html = []
+    display_handle = ipy_display(HTML(""), display_id=True)
+    
+    running = True
+    clock = pygame.time.Clock()
+    frame_counter = 0
+    
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+        
+        screen.blit(background_image, (0, 0))
+        
+        curr_value = robot.reflection()
+        err = SET_POINT - curr_value
+        error_sum += err
+        robot.turn_rate = KP * err + KD * error_sum + KI * (err - prev_err)
+        prev_err = err
+        robot.drive()
+        robot.draw()
+        
+        text = font.render(f"curr_value: {curr_value}, err: {err}, turn_rate: {robot.turn_rate:.2f}", True, GREEN)
+        screen.blit(text, (10, 0))
+        
+        pygame.display.flip()
+   
+        frame_counter += 1
+        if frame_counter % FRAME_RATE == 0:
+            # Конвертируем кадр в изображение для отображения в Colab
+            imgdata = pygame.surfarray.array3d(screen)
+            imgdata = np.transpose(imgdata, (1, 0, 2))
+            
+            # Добавляем новый кадр в список
+            display_html.append(f"""<img src='data:image/png;base64,{image_to_base64(imgdata)}'/>""")
+            
+            # Обновляем вывод (показываем все кадры)
+            display_handle.update(HTML("<br>".join(display_html[-20:])))  
+        
+        clock.tick(60)
+
+    pygame.quit()
+    vdisplay.stop()
+
+if __name__ == "__main__":
+    main()
